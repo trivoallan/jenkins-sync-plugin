@@ -15,47 +15,33 @@
  */
 package io.fabric8.jenkins.openshiftsync;
 
-import com.cloudbees.hudson.plugins.folder.Folder;
-
+import com.cloudbees.hudson.plugins.folder.computed.FolderComputation;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import hudson.BulkChange;
-import hudson.model.ItemGroup;
 import hudson.model.Job;
-import hudson.model.ParameterDefinition;
 import hudson.security.ACL;
 import hudson.triggers.SafeTimerTask;
-import hudson.util.XStream2;
 import io.fabric8.kubernetes.client.Watcher.Action;
-import io.fabric8.openshift.api.model.BuildConfig;
-import io.fabric8.openshift.api.model.BuildConfigList;
-import io.fabric8.openshift.api.model.BuildList;
+import io.fabric8.openshift.api.model.*;
+import jenkins.branch.MultiBranchProject.*;
 import jenkins.model.Jenkins;
 import jenkins.security.NotReallyRoleSensitiveCallable;
 import jenkins.util.Timer;
 
-import org.apache.tools.ant.filters.StringInputStream;
 import org.eclipse.jetty.util.ConcurrentHashSet;
-import org.jenkinsci.plugins.workflow.flow.FlowDefinition;
-import org.jenkinsci.plugins.workflow.job.WorkflowJob;
+import org.jenkinsci.plugins.workflow.job.WorkflowRun;
 
-import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static io.fabric8.jenkins.openshiftsync.Annotations.DISABLE_SYNC_CREATE;
+import static io.fabric8.jenkins.openshiftsync.Annotations.*;
 import static io.fabric8.jenkins.openshiftsync.BuildConfigToJobMap.getJobFromBuildConfig;
 import static io.fabric8.jenkins.openshiftsync.BuildConfigToJobMap.initializeBuildConfigToJobMap;
-import static io.fabric8.jenkins.openshiftsync.BuildConfigToJobMap.putJobWithBuildConfig;
+import static io.fabric8.jenkins.openshiftsync.BuildConfigToMultibranchJobsMap.initializeBuildConfigToMultibranchJobsMap;
 import static io.fabric8.jenkins.openshiftsync.BuildConfigToJobMap.removeJobWithBuildConfig;
-import static io.fabric8.jenkins.openshiftsync.BuildConfigToJobMapper.mapBuildConfigToFlow;
-import static io.fabric8.jenkins.openshiftsync.BuildRunPolicy.SERIAL;
-import static io.fabric8.jenkins.openshiftsync.BuildRunPolicy.SERIAL_LATEST_ONLY;
 import static io.fabric8.jenkins.openshiftsync.Constants.OPENSHIFT_BUILD_STATUS_FIELD;
 import static io.fabric8.jenkins.openshiftsync.Constants.OPENSHIFT_LABELS_BUILD_CONFIG_NAME;
-import static io.fabric8.jenkins.openshiftsync.JenkinsUtils.updateJob;
 import static io.fabric8.jenkins.openshiftsync.OpenShiftUtils.*;
 import static java.util.logging.Level.SEVERE;
 
@@ -65,7 +51,7 @@ import static java.util.logging.Level.SEVERE;
  * configuration
  */
 public class BuildConfigWatcher extends BaseWatcher {
-    private final Logger logger = Logger.getLogger(getClass().getName());
+    final Logger logger = Logger.getLogger(getClass().getName());
 
     // for coordinating between ItemListener.onUpdate and onDeleted both
     // getting called when we delete a job; ID should be combo of namespace
@@ -139,6 +125,7 @@ public class BuildConfigWatcher extends BaseWatcher {
 
     public void start() {
         initializeBuildConfigToJobMap();
+        initializeBuildConfigToMultibranchJobsMap();
         logger.info("Now handling startup build configs!!");
         super.start();
 
@@ -233,9 +220,11 @@ public class BuildConfigWatcher extends BaseWatcher {
 
     private void upsertJob(final BuildConfig buildConfig) throws Exception {
         if (isPipelineStrategyBuildConfig(buildConfig)) {
+            // check if Multibranch annotation is present
+            Boolean enableMultibranchSync = Boolean.valueOf(getAnnotation(buildConfig, ENABLE_MULTIBRANCH_SYNC));
             // sync on intern of name should guarantee sync on same actual obj
             synchronized (buildConfig.getMetadata().getUid().intern()) {
-                ACL.impersonate(ACL.SYSTEM, new JobProcessor(this, buildConfig));
+                ACL.impersonate(ACL.SYSTEM, new JobProcessor(this, buildConfig, enableMultibranchSync));
             }
         }
     }

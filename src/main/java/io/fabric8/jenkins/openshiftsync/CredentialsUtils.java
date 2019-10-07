@@ -1,19 +1,14 @@
 package io.fabric8.jenkins.openshiftsync;
 
 import com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey;
-import com.cloudbees.plugins.credentials.Credentials;
-import com.cloudbees.plugins.credentials.CredentialsMatchers;
-import com.cloudbees.plugins.credentials.CredentialsProvider;
-import com.cloudbees.plugins.credentials.CredentialsScope;
-import com.cloudbees.plugins.credentials.CredentialsStore;
-import com.cloudbees.plugins.credentials.SecretBytes;
+import com.cloudbees.plugins.credentials.*;
 import com.cloudbees.plugins.credentials.domains.Domain;
 import com.cloudbees.plugins.credentials.domains.DomainRequirement;
-import com.cloudbees.plugins.credentials.impl.CertificateCredentialsImpl;
 import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.openshift.jenkins.plugins.OpenShiftTokenCredentials;
+import com.cloudbees.plugins.credentials.impl.CertificateCredentialsImpl;
+
 import hudson.model.Fingerprint;
 import hudson.remoting.Base64;
 import hudson.security.ACL;
@@ -21,6 +16,7 @@ import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.openshift.api.model.BuildConfig;
 import jenkins.model.Jenkins;
+
 import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.context.SecurityContextHolder;
 import org.apache.commons.lang.StringUtils;
@@ -31,9 +27,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import com.openshift.jenkins.plugins.OpenShiftTokenCredentials;
 
 import static hudson.Util.fixNull;
 import static io.fabric8.jenkins.openshiftsync.Constants.*;
@@ -42,12 +39,9 @@ import static org.apache.commons.lang.StringUtils.isNotBlank;
 
 public class CredentialsUtils {
 
-  private final static Logger logger = Logger.getLogger(CredentialsUtils.class.getName());
-  public static final String KUBERNETES_SERVICE_ACCOUNT = "Kubernetes Service Account";
-  public static ConcurrentHashMap<String, String> uidToSecretNameMap;
+    private final static Logger logger = Logger.getLogger(CredentialsUtils.class.getName());
 
-
-  public static Secret getSourceCredentials(BuildConfig buildConfig) {
+    public static Secret getSourceCredentials(BuildConfig buildConfig) {
         if (buildConfig.getSpec() != null && buildConfig.getSpec().getSource() != null
                 && buildConfig.getSpec().getSource().getSourceSecret() != null
                 && !buildConfig.getSpec().getSource().getSourceSecret().getName().isEmpty()) {
@@ -95,15 +89,12 @@ public class CredentialsUtils {
         }
     }
     
-    private static String getSecretCustomName(Secret secret) {
+    private static String getCustomName(Secret secret) {
         ObjectMeta metadata = secret.getMetadata();
         if (metadata != null) {
             Map<String,String> annotations = metadata.getAnnotations();
             if (annotations != null) {
-                String secretName = annotations.get(Annotations.SECRET_NAME);
-                if (secretName != null){
-                  return secretName;
-                }
+                return annotations.get(Annotations.SECRET_NAME);
             }
         }
         return null;
@@ -126,66 +117,32 @@ public class CredentialsUtils {
     }
 
     private static String upsertCredential(Secret secret, String namespace, String secretName) throws IOException {
-      if (uidToSecretNameMap == null){
-        uidToSecretNameMap = new ConcurrentHashMap<String, String>();
-      }
-        String customSecretName = getSecretCustomName(secret);
+        String id = null;
+        String customSecretName = getCustomName(secret);
         if (secret != null) {
-          Credentials creds = secretToCredentials(secret);
-          if (creds != null) {
-            // checking with updated secret name if custom name is not null
-            String id = generateCredentialsName(namespace, secretName, customSecretName);
+            Credentials creds = secretToCredentials(secret);
+            if (creds == null)
+                return null;
+            id = secretName(namespace, secretName, customSecretName);
             Credentials existingCreds = lookupCredentials(id);
             final SecurityContext previousContext = ACL.impersonate(ACL.SYSTEM);
             try {
-              CredentialsStore s = CredentialsProvider.lookupStores(Jenkins.getActiveInstance()).iterator().next();
-              String originalId = generateCredentialsName(namespace, secretName, null);
-              Credentials existingOriginalCreds = lookupCredentials(originalId);
-              NamespaceName secretNamespaceName = null;
-
-              ObjectMeta metadata = secret.getMetadata();
-              String secretUid = metadata.getUid();
-              if (!originalId.equals(id)) {
-                boolean hasAddedCredential = s.addCredentials(Domain.global(), creds);
-                if (!hasAddedCredential) {
-                  logger.warning("Setting secret  failed for secret with new Id " + id + " from Secret " + secretNamespaceName + " with revision: " + metadata.getResourceVersion());
-                  logger.warning("Check if Id "+id+" is not already used.");
-                } else {
-                  String oldId = uidToSecretNameMap.get(secretUid);
-                  if (oldId != null) {
-                    Credentials oldCredentials = lookupCredentials(oldId);
-                    s.removeCredentials(Domain.global(), oldCredentials);
-                  } else if (existingOriginalCreds != null) {
-                    s.removeCredentials(Domain.global(), existingOriginalCreds);
-                  }
-                  uidToSecretNameMap.put(secretUid, id);
-                  secretNamespaceName = NamespaceName.create(secret);
-                  logger.info("Updated credential " + oldId + " with new Id " + id + " from Secret " + secretNamespaceName + " with revision: " + metadata.getResourceVersion());
-                }
-              } else {
+                CredentialsStore s = CredentialsProvider.lookupStores(Jenkins.getActiveInstance()).iterator().next();
                 if (existingCreds != null) {
-                  s.updateCredentials(Domain.global(), existingCreds, creds);
-                  uidToSecretNameMap.put(secretUid, id);
-                  secretNamespaceName = NamespaceName.create(secret);
-                  logger.info("Updated credential " + id + " from Secret " + secretNamespaceName + " with revision: " + metadata.getResourceVersion());
+                    s.updateCredentials(Domain.global(), existingCreds, creds);
+                    logger.info("Updated credential " + id + " from Secret " + NamespaceName.create(secret)
+                            + " with revision: " + secret.getMetadata().getResourceVersion());
                 } else {
-                  boolean hasAddedCredential = s.addCredentials(Domain.global(), creds);
-                  if (!hasAddedCredential) {
-                    logger.warning("Update failed for secret with new Id " + id + " from Secret " + secretNamespaceName + " with revision: " + metadata.getResourceVersion());
-                  } else {
-                    uidToSecretNameMap.put(secretUid, id);
-                    secretNamespaceName = NamespaceName.create(secret);
-                    logger.info("Created credential " + id + " from Secret " + secretNamespaceName + " with revision: " + metadata.getResourceVersion());
-                  }
+                    s.addCredentials(Domain.global(), creds);
+                    logger.info("Created credential " + id + " from Secret " + NamespaceName.create(secret)
+                            + " with revision: " + secret.getMetadata().getResourceVersion());
                 }
-              }
-              s.save();
+                s.save();
             } finally {
-              SecurityContextHolder.setContext(previousContext);
+                SecurityContextHolder.setContext(previousContext);
             }
-          }
         }
-        return null;
+        return id;
     }
 
     private static void deleteCredential(String id, NamespaceName name, String resourceRevision) throws IOException {
@@ -195,22 +152,23 @@ public class CredentialsUtils {
             try {
                 Fingerprint fp = CredentialsProvider.getFingerprintOf(existingCred);
                 if (fp != null && fp.getJobs().size() > 0) {
-                    // per messages in credentials console, it is not a given but it is possible for job refs to a
-                    // credential to be tracked ; if so, we will not prevent deletion, but at least note things for
-                    // potential diagnostics
+                    // per messages in credentials console, it is not a given,
+                    // but
+                    // it is possible for job refs to a credential to be
+                    // tracked;
+                    // if so, we will not prevent deletion, but at least note
+                    // things
+                    // for potential diagnostics
                     StringBuffer sb = new StringBuffer();
                     for (String job : fp.getJobs())
                         sb.append(job).append(" ");
                     logger.info("About to delete credential " + id + "which is referenced by jobs: " + sb.toString());
                 }
                 CredentialsStore s = CredentialsProvider.lookupStores(Jenkins.getActiveInstance()).iterator().next();
-              if (!existingCred.getDescriptor().getDisplayName().contains(KUBERNETES_SERVICE_ACCOUNT)) {
                 s.removeCredentials(Domain.global(), existingCred);
-                logger.info("Deleted credential " + id + " from Secret " + name + " with revision: " + resourceRevision);
+                logger.info(
+                        "Deleted credential " + id + " from Secret " + name + " with revision: " + resourceRevision);
                 s.save();
-              } else {
-                logger.warning("Stopped attempt to delete " + KUBERNETES_SERVICE_ACCOUNT + " credentials with Id " + id );
-              }
             } finally {
                 SecurityContextHolder.setContext(previousContext);
             }
@@ -219,7 +177,7 @@ public class CredentialsUtils {
 
     public static void deleteCredential(Secret secret) throws IOException {
         if (secret != null) {
-            String id = generateCredentialsName(secret.getMetadata().getNamespace(), secret.getMetadata().getName(), getSecretCustomName(secret));
+            String id = secretName(secret.getMetadata().getNamespace(), secret.getMetadata().getName(), getCustomName(secret));
             deleteCredential(id, NamespaceName.create(secret), secret.getMetadata().getResourceVersion());
         }
     }
@@ -254,29 +212,29 @@ public class CredentialsUtils {
                         CredentialsMatchers.withId(id));
     }
 
-    private static String generateCredentialsName(String namespace, String name, String customName) {
+    private static String secretName(String namespace, String name, String customName) {
         return (customName == null) ? namespace + "-" + name : customName;
     }
 
-    private static Credentials arbitraryKeyValueTextCredential(Map<String, String> data, String generatedCredentialsName) {
+    private static Credentials arbitraryKeyValueTextCredential(Map<String, String> data, String secretName) {
         String text = "";
         if (data != null && data.size() > 0) {
             // convert to JSON for parsing ease in pipelines
             try {
                 text = new ObjectMapper().writeValueAsString(data);
             } catch (JsonProcessingException e) {
-                logger.log(Level.WARNING, "Arbitrary opaque secret " + generatedCredentialsName + " had issue converting json", e);
+                logger.log(Level.WARNING, "Arbitrary opaque secret " + secretName + " had issue converting json", e);
             }
         }
         if (StringUtils.isBlank(text)) {
             logger.log(
                     Level.WARNING,
                     "Opaque secret {0} did not provide any data that could be processed into a Jenkins credential",
-                    new Object[] { generatedCredentialsName });
+                    new Object[] { secretName });
 
             return null;
         }
-        return newSecretTextCredential(generatedCredentialsName, new String(Base64.encode(text.getBytes())));
+        return newSecretTextCredential(secretName, new String(Base64.encode(text.getBytes())));
     }
 
     private static Credentials secretToCredentials(Secret secret) {
@@ -291,47 +249,47 @@ public class CredentialsUtils {
             return null;
         }
 
-        final String generatedCredentialsName = generateCredentialsName(namespace, name, getSecretCustomName(secret));
+        final String secretName = secretName(namespace, name, getCustomName(secret));
         switch (secret.getType()) {
         case OPENSHIFT_SECRETS_TYPE_OPAQUE:
             String usernameData = data.get(OPENSHIFT_SECRETS_DATA_USERNAME);
             String passwordData = data.get(OPENSHIFT_SECRETS_DATA_PASSWORD);
             if (isNotBlank(usernameData) && isNotBlank(passwordData)) {
-                return newUsernamePasswordCredentials(generatedCredentialsName, usernameData, passwordData);
+                return newUsernamePasswordCredentials(secretName, usernameData, passwordData);
             }
             String sshKeyData = data.get(OPENSHIFT_SECRETS_DATA_SSHPRIVATEKEY);
             if (isNotBlank(sshKeyData)) {
-                return newSSHUserCredential(generatedCredentialsName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME), sshKeyData);
+                return newSSHUserCredential(secretName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME), sshKeyData);
             }
             String fileData = data.get(OPENSHIFT_SECRETS_DATA_FILENAME);
             if (isNotBlank(fileData)) {
-                return newSecretFileCredential(generatedCredentialsName, fileData);
+                return newSecretFileCredential(secretName, fileData);
             }
             String certificateDate = data.get(OPENSHIFT_SECRETS_DATA_CERTIFICATE);
             if (isNotBlank(certificateDate)) {
-                return newCertificateCredential(generatedCredentialsName, passwordData, certificateDate);
+                return newCertificateCredential(secretName, passwordData, certificateDate);
             }
             String secretTextData = data.get(OPENSHIFT_SECRETS_DATA_SECRET_TEXT);
             if (isNotBlank(secretTextData)) {
-                return newSecretTextCredential(generatedCredentialsName, secretTextData);
+                return newSecretTextCredential(secretName, secretTextData);
             }
             String openshiftTokenData = data.get(OPENSHIFT_SECRETS_DATA_CLIENT_TOKEN);
             if (isNotBlank(openshiftTokenData)) {
-              return newOpenshiftTokenCredentials(generatedCredentialsName, openshiftTokenData);
+              return newOpenshiftTokenCredentials(secretName, openshiftTokenData);
             }
 
-            return arbitraryKeyValueTextCredential(data, generatedCredentialsName);
+            return arbitraryKeyValueTextCredential(data, secretName);
 
         case OPENSHIFT_SECRETS_TYPE_BASICAUTH:
-            return newUsernamePasswordCredentials(generatedCredentialsName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME),
+            return newUsernamePasswordCredentials(secretName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME),
                     data.get(OPENSHIFT_SECRETS_DATA_PASSWORD));
         case OPENSHIFT_SECRETS_TYPE_SSH:
-            return newSSHUserCredential(generatedCredentialsName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME),
+            return newSSHUserCredential(secretName, data.get(OPENSHIFT_SECRETS_DATA_USERNAME),
                     data.get(OPENSHIFT_SECRETS_DATA_SSHPRIVATEKEY));
         default:
             // the type field is marked optional in k8s.io/api/core/v1/types.go,
             // default to OPENSHIFT_SECRETS_DATA_SECRET_TEXT in this case
-            return arbitraryKeyValueTextCredential(data, generatedCredentialsName);
+            return arbitraryKeyValueTextCredential(data, secretName);
         }
     }
 

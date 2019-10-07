@@ -36,6 +36,7 @@ import static java.util.logging.Level.SEVERE;
  */
 public class SecretWatcher extends BaseWatcher {
     private ConcurrentHashMap<String, String> trackedSecrets;
+
     private final Logger logger = Logger.getLogger(getClass().getName());
 
     @SuppressFBWarnings("EI_EXPOSE_REP2")
@@ -160,66 +161,44 @@ public class SecretWatcher extends BaseWatcher {
     }
 
     private void upsertCredential(final Secret secret) throws Exception {
-      if (secret != null) {
-        ObjectMeta metadata = secret.getMetadata();
-        if (metadata != null) {
-          logger.info("Upserting Secret with Uid " + metadata.getUid() + " with Name " + metadata.getName());
-          if (validSecret(secret)) {
+        if (validSecret(secret)) {
             CredentialsUtils.upsertCredential(secret);
-            trackedSecrets.put(metadata.getUid(), metadata.getResourceVersion());
-          }
+            trackedSecrets.put(secret.getMetadata().getUid(), secret
+                    .getMetadata().getResourceVersion());
         }
-      }
     }
 
     private void modifyCredential(Secret secret) throws Exception {
-      if (secret != null) {
-        ObjectMeta metadata = secret.getMetadata();
-        if (metadata != null) {
-          logger.info("Modifying Secret with Uid " + metadata.getUid() + " with Name " + metadata.getName());
-          if (validSecret(secret) && shouldProcessSecret(secret)) {
+        if (validSecret(secret) && shouldProcessSecret(secret)) {
             CredentialsUtils.upsertCredential(secret);
-            trackedSecrets.put(metadata.getUid(), metadata.getResourceVersion());
-          }
+            trackedSecrets.put(secret.getMetadata().getUid(), secret
+                    .getMetadata().getResourceVersion());
         }
-      }
     }
 
     private boolean validSecret(Secret secret) {
-      if (secret !=null){
         ObjectMeta metadata = secret.getMetadata();
         if (metadata != null) {
-          String name = metadata.getName();
-          String namespace = metadata.getNamespace();
-          logger.info("Validating Secret with Uid "+ metadata.getUid() + " with Name " + name);
-          return name != null && !name.isEmpty() && namespace != null && !namespace.isEmpty();
+            String name = metadata.getName();
+            String namespace = metadata.getNamespace();
+            return name != null && !name.isEmpty() && namespace != null
+                    && !namespace.isEmpty();
         }
-      }
         return false;
     }
 
     private boolean shouldProcessSecret(Secret secret) {
-      if (secret !=null){
-        ObjectMeta metadata = secret.getMetadata();
-        if (metadata != null) {
-          String uid = metadata.getUid();
-          String rv = metadata.getResourceVersion();
-          String savedRV = trackedSecrets.get(uid);
-          if (savedRV == null || !savedRV.equals(rv)) {
+        String uid = secret.getMetadata().getUid();
+        String rv = secret.getMetadata().getResourceVersion();
+        String savedRV = trackedSecrets.get(uid);
+        if (savedRV == null || !savedRV.equals(rv))
             return true;
-          }
-        }
-      }
-      return false;
+        return false;
     }
 
     private void deleteCredential(final Secret secret) throws Exception {
-      if (secret != null){
-        ObjectMeta metadata = secret.getMetadata();
-        if (metadata != null) {
-          trackedSecrets.remove(metadata.getUid());
-          CredentialsUtils.deleteCredential(secret);
-        }
-      }
+        trackedSecrets.remove(secret.getMetadata().getUid());
+        CredentialsUtils.deleteCredential(secret);
     }
+
 }
