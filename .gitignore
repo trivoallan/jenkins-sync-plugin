@@ -85,6 +85,3 @@ crashlytics-build.properties
 # Created by .ignore support plugin (hsz.mobi)
 work/
 /bin/
-
-.DS_Store
-
