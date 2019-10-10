@@ -181,6 +181,8 @@ public class PipelineJobListener extends ItemListener {
 
         BuildConfigProjectProperty property = job.getProperty(BuildConfigProjectProperty.class);
 
+        logger.info("[multibranch] HELLO ?");
+
         if (property != null) {
             if (StringUtils.isNotBlank(property.getNamespace()) && StringUtils.isNotBlank(property.getName())) {
                 logger.info("Found BuildConfigProjectProperty for namespace: " + property.getNamespace() + " name: " + property.getName());
