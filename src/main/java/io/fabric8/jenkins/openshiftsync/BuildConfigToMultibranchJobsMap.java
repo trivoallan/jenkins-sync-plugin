@@ -35,6 +35,9 @@ public class BuildConfigToMultibranchJobsMap {
         String namespace = buildConfigProjectProperty.getNamespace();
         String buildConfigName = buildConfigProjectProperty.getName();
         Boolean enableMultibranchSync = Boolean.valueOf(getAnnotation(buildConfigProjectProperty.getBuildConfig(), ENABLE_MULTIBRANCH_SYNC));
+        logger.info("[multibranch] buildConfigName: " + buildConfigName);
+        logger.info("[multibranch] annotation: " + getAnnotation(buildConfigProjectProperty.getBuildConfig(), ENABLE_MULTIBRANCH_SYNC));
+
         if (enableMultibranchSync) {
           if (isNotBlank(namespace) && isNotBlank(buildConfigName)) {
             ArrayList<WorkflowJob> jobsList =  buildConfigToMultibranchJobsMap.get(OpenShiftUtils.jenkinsJobName(namespace, buildConfigName));
