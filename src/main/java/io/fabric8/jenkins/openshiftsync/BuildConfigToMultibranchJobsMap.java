@@ -24,6 +24,7 @@ public class BuildConfigToMultibranchJobsMap {
   }
 
   static synchronized void initializeBuildConfigToMultibranchJobsMap() {
+    logger.info("[multibranch] Initializing");
     if (buildConfigToMultibranchJobsMap == null) {
       List<WorkflowJob> jobs = Jenkins.getActiveInstance().getAllItems(WorkflowJob.class);
       buildConfigToMultibranchJobsMap = new ConcurrentHashMap<>();
